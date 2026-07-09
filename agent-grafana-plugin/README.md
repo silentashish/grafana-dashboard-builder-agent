@@ -1,148 +1,128 @@
-# ECLSS Assistant Grafana app plugin
+# Grafana Dashboard Agent — App Plugin
 
-This app plugin hosts the ECLSS Assistant inside Grafana. It replaces the standalone Chainlit frontend with a React/TypeScript UI that talks to the existing Python/Ollama agent runtime through the headless FastAPI bridge in `../chainlit-ollama-agent`.
+A Grafana **app plugin** that hosts an AI dashboard-building assistant directly inside
+Grafana. It adds an **Assistant** page (a React/TypeScript chat UI built with
+`@grafana/ui`) and a **Configuration** page, and talks to the headless Python agent in
+[`../agent`](../agent) over REST and WebSocket.
 
-## What are Grafana app plugins?
+> This is the frontend half of the project. The assistant's brain — the LLM, the
+> dashboard tools, the data-source access — lives in [`../agent`](../agent). See the
+> [root README](../README.md) for the full architecture.
 
-App plugins can let you create a custom out-of-the-box monitoring experience by custom pages, nested data sources and panel plugins. This plugin uses an app page so the assistant can sit beside Grafana dashboards while still using Grafana plugin settings, resource handlers, and `@grafana/ui`.
+## What you get
 
-## Assistant configuration
+- An **Assistant** nav page that sits beside your dashboards.
+- A **Configuration** page (Admin-only) to point the plugin at your agent.
+- A **Go backend** that proxies REST calls to the agent so the API key never reaches the
+  browser; the browser opens the WebSocket directly for token streaming.
 
-The configuration page stores:
+## Requirements
 
-- `jsonData.assistantApiUrl`: HTTP base URL used by the Go plugin backend for REST calls.
-- `jsonData.assistantWsUrl`: WebSocket URL used by the browser for streaming assistant packets.
-- `secureJsonData.apiKey`: optional secret forwarded by the Go backend as `Authorization: Bearer <key>`.
+- Node.js `>= 22` (`.nvmrc` pins the version)
+- Go `1.25+` and [Mage](https://magefile.org/) (for the backend binary)
+- Docker (for `npm run server`, which spins up Grafana)
+- A running agent — start it first from [`../agent`](../agent)
 
-The default local values are provisioned in `provisioning/plugins/apps.yaml`.
+## Install & run (development)
 
-When running from the workspace root, `../docker-compose.yml` builds `Dockerfile.grafana` so Grafana receives a complete plugin install, including the Linux backend executable declared by `plugin.json`. The image installs the app into `/var/lib/grafana-plugins`, outside the persisted `/var/lib/grafana` data volume, and `GF_PATHS_PLUGINS` points Grafana at that directory. Mounting only `dist/` is not enough for this backend app plugin unless `mage -v` has also produced the platform binary in that directory.
+```bash
+# 1. Frontend
+npm install
+npm run build          # production build  (or: npm run dev  for watch mode)
 
-## Get started
+# 2. Backend (Go) — builds binaries for linux/windows/darwin into dist/
+mage -v
+mage -l                # list all available targets
 
-### Backend
+# 3. Grafana with the plugin provisioned (Docker)
+npm run server         # http://localhost:3000
+```
 
-1. Update [Grafana plugin SDK for Go](https://grafana.com/developers/plugin-tools/key-concepts/backend-plugins/grafana-plugin-sdk-for-go) dependency to the latest minor version:
+`npm run server` builds `Dockerfile.grafana`, which compiles the frontend + backend and
+installs the app into `/var/lib/grafana-plugins/<plugin-id>` (outside the persisted data
+volume) so the backend binary is always present. Mounting only `dist/` is **not** enough
+for a backend app plugin unless `mage -v` has produced the platform binary there.
 
-   ```bash
-   go get -u github.com/grafana/grafana-plugin-sdk-go
-   go mod tidy
-   ```
+Pin a Grafana version if needed:
 
-2. Build plugin backend binaries for Linux, Windows and Darwin:
+```bash
+GRAFANA_VERSION=12.4.0 npm run server
+```
 
-   ```bash
-   mage -v
-   ```
+## Configure the plugin
 
-3. List all available Mage targets for additional commands:
+Open Grafana → **Administration → Plugins → Agent → Configuration** and set:
 
-   ```bash
-   mage -l
-   ```
+| Field | Stored as | Example | Purpose |
+|---|---|---|---|
+| HTTP URL | `jsonData.assistantApiUrl` | `http://host.docker.internal:8000` | Base URL the Go backend uses for REST calls |
+| WebSocket URL | `jsonData.assistantWsUrl` | `ws://localhost:8000/ws/assistant` | Streaming URL the browser connects to |
+| API key | `secureJsonData.apiKey` | *(optional)* | Forwarded by the backend as `Authorization: Bearer <key>`; must match `ASSISTANT_API_KEY` in the agent |
 
-### Frontend
+The same values are provisioned for local development in
+[`provisioning/plugins/apps.yaml`](./provisioning/plugins/apps.yaml), so a freshly
+started `npm run server` is already wired to a local agent on port `8000`.
 
-1. Install dependencies
+## Reuse this plugin under your own organization
 
-   ```bash
-   npm install
-   ```
+The example ships with plugin id `eclss-agentfrontend-app` and author `Eclss`. Grafana
+requires the id to be `<your-cloud-slug>-<name>-app`. To rename, change it in **every**
+file below and then **restart Grafana** (a changed plugin id requires a restart):
 
-2. Build plugin in development mode and run in watch mode
+- `src/plugin.json` — `id`, `name`, `info.author`
+- `pkg/main.go` — `app.Manage("<id>", …)`
+- `provisioning/plugins/apps.yaml` — `type`, `org_name`
+- `Dockerfile.grafana` — the install path `/var/lib/grafana-plugins/<id>`
+- `.github/workflows/ci.yml` — any id references
+- `package.json` — `name`, `author`
 
-   ```bash
-   npm run dev
-   ```
+> **Do not hand-edit `.config/`.** Those files are generated and managed by
+> `@grafana/create-plugin`. To update tooling, run
+> `npx @grafana/create-plugin@latest update` and follow the
+> [extend-configurations guide](https://grafana.com/developers/plugin-tools/how-to-guides/extend-configurations.md).
 
-3. Build plugin in production mode
+## Testing & linting
 
-   ```bash
-   npm run build
-   ```
+```bash
+npm run test          # Jest, watch mode (needs a git repo)
+npm run test:ci       # Jest, single run
+npm run typecheck     # tsc --noEmit
+npm run lint          # eslint  (npm run lint:fix to autofix + prettier)
 
-4. Run the tests (using Jest)
+# End-to-end (Playwright) — needs a running Grafana
+npm run server
+npm run e2e
+```
 
-   ```bash
-   # Runs the tests and watches for changes, requires git init first
-   npm run test
+## Signing & distributing
 
-   # Exits after running all the tests
-   npm run test:ci
-   ```
+Plugins distributed via the Grafana catalog (publicly or privately) must be signed with
+`@grafana/sign-plugin`. Signing is **not** required for local development — the Docker
+dev environment runs the plugin unsigned (`GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS`).
 
-5. Spin up a Grafana instance and run the plugin inside it (using Docker)
+Before signing, read Grafana's
+[publishing & signing criteria](https://grafana.com/legal/plugins/#plugin-publishing-and-signing-criteria)
+and [signature levels](https://grafana.com/legal/plugins/#what-are-the-different-classifications-of-plugins).
 
-   ```bash
-   npm run server
-   ```
-
-6. Run the E2E tests (using Playwright)
-
-   ```bash
-   # Spins up a Grafana instance first that we tests against
-   npm run server
-
-   # If you wish to start a certain Grafana version. If not specified will use latest by default
-   GRAFANA_VERSION=12.4.0 npm run server
-
-   # Starts the tests
-   npm run e2e
-   ```
-
-7. Run the linter
-
-   ```bash
-   npm run lint
-
-   # or
-
-   npm run lint:fix
-   ```
-
-# Distributing your plugin
-
-When distributing a Grafana plugin either within the community or privately the plugin must be signed so the Grafana application can verify its authenticity. This can be done with the `@grafana/sign-plugin` package.
-
-_Note: It's not necessary to sign a plugin during development. The docker development environment that is scaffolded with `@grafana/create-plugin` caters for running the plugin without a signature._
-
-## Initial steps
-
-Before signing a plugin please read the Grafana [plugin publishing and signing criteria](https://grafana.com/legal/plugins/#plugin-publishing-and-signing-criteria) documentation carefully.
-
-`@grafana/create-plugin` has added the necessary commands and workflows to make signing and distributing a plugin via the grafana plugins catalog as straightforward as possible.
-
-Before signing a plugin for the first time please consult the Grafana [plugin signature levels](https://grafana.com/legal/plugins/#what-are-the-different-classifications-of-plugins) documentation to understand the differences between the types of signature level.
+**One-time setup:**
 
 1. Create a [Grafana Cloud account](https://grafana.com/signup).
-2. Make sure that the first part of the plugin ID matches the slug of your Grafana Cloud account.
-   - _You can find the plugin ID in the `plugin.json` file inside your plugin directory. For example, if your account slug is `acmecorp`, you need to prefix the plugin ID with `acmecorp-`._
+2. Make sure the first part of the plugin id matches your Grafana Cloud account slug.
 3. Create a Grafana Cloud API key with the `PluginPublisher` role.
-4. Keep a record of this API key as it will be required for signing a plugin
 
-## Signing a plugin
+**Signing via the GitHub Actions release workflow** ([`.github/workflows/release.yml`](./.github/workflows/release.yml)):
 
-### Using Github actions release workflow
-
-If the plugin is using the github actions supplied with `@grafana/create-plugin` signing a plugin is included out of the box. The [release workflow](./.github/workflows/release.yml) can prepare everything to make submitting your plugin to Grafana as easy as possible. Before being able to sign the plugin however a secret needs adding to the Github repository.
-
-1. Please navigate to "settings > secrets > actions" within your repo to create secrets.
-2. Click "New repository secret"
-3. Name the secret "GRAFANA_API_KEY"
-4. Paste your Grafana Cloud API key in the Secret field
-5. Click "Add secret"
-
-#### Push a version tag
-
-To trigger the workflow we need to push a version tag to github. This can be achieved with the following steps:
-
-1. Run `npm version <major|minor|patch>`
-2. Run `git push origin main --follow-tags`
+1. In the repo, add a secret named `GRAFANA_API_KEY` with your Cloud API key
+   (Settings → Secrets → Actions).
+2. Push a version tag to trigger the workflow:
+   ```bash
+   npm version <major|minor|patch>
+   git push origin main --follow-tags
+   ```
 
 ## Learn more
 
-Below you can find source code for existing app plugins and other related documentation.
-
+- [`plugin.json` reference](https://grafana.com/developers/plugin-tools/reference/plugin-json)
+- [Grafana plugin SDK for Go](https://grafana.com/developers/plugin-tools/key-concepts/backend-plugins/grafana-plugin-sdk-for-go)
 - [Basic app plugin example](https://github.com/grafana/grafana-plugin-examples/tree/master/examples/app-basic#readme)
-- [`plugin.json` documentation](https://grafana.com/developers/plugin-tools/reference/plugin-jsonplugin-json)
 - [Sign a plugin](https://grafana.com/developers/plugin-tools/publish-a-plugin/sign-a-plugin)

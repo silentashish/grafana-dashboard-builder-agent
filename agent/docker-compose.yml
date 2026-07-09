@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-chainlit}
+      POSTGRES_USER: ${POSTGRES_USER:-chainlit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chainlit}
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-chainlit} -d ${POSTGRES_DB:-chainlit}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      # Default to the compose Postgres service; override in .env if you use an external DB.
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://chainlit:chainlit@postgres:5432/chainlit}
+    # Run migrations (alembic upgrade head) before starting the API.
+    command: ['sh', 'scripts/start.sh']
+    ports:
+      - '8000:8000'   # assistant API
+      - '5678:5678'   # debugpy (when DEBUGPY_ENABLED=true)
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Lets the agent reach Grafana / OpenSearch / Ollama running on the host.
+    # Set GRAFANA_URL / OPENSEARCH_URL / OLLAMA_BASE_URL to http://host.docker.internal:<port>.
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+
+volumes:
+  postgres-data:

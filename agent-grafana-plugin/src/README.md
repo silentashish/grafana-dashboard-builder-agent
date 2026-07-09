@@ -1,50 +1,35 @@
-<!-- This README file is going to be the one displayed on the Grafana.com website for your plugin. Uncomment and replace the content here before publishing.
+# Grafana Dashboard Agent
 
-Remove any remaining comments before publishing as these may be displayed on Grafana.com -->
+An AI assistant that builds Grafana dashboards from natural language, right inside
+Grafana. This app plugin adds an **Assistant** page where you describe the dashboard you
+want and the agent creates it for you — discovering data and writing panels through MCP
+tools.
 
-# Agent-Frontend
+## Overview
 
-<!-- To help maximize the impact of your README and improve usability for users, we propose the following loose structure:
-
-**BEFORE YOU BEGIN**
-- Ensure all links are absolute URLs so that they will work when the README is displayed within Grafana and Grafana.com
-- Be inspired ✨
-  - [grafana-polystat-panel](https://github.com/grafana/grafana-polystat-panel)
-  - [volkovlabs-variable-panel](https://github.com/volkovlabs/volkovlabs-variable-panel)
-
-**ADD SOME BADGES**
-
-Badges convey useful information at a glance for users whether in the Catalog or viewing the source code. You can use the generator on [Shields.io](https://shields.io/badges/dynamic-json-badge) together with the Grafana.com API
-to create dynamic badges that update automatically when you publish a new version to the marketplace.
-
-- For the URL parameter use `https://grafana.com/api/plugins/your-plugin-id`.
-- Example queries:
-  - Downloads: `$.downloads`
-  - Catalog Version: `$.version`
-  - Grafana Dependency: `$.grafanaDependency`
-  - Signature Type: `$.versionSignatureType`
-- Optionally, for the logo parameter use `grafana`.
-
-Full example: ![Dynamic JSON Badge](https://img.shields.io/badge/dynamic/json?logo=grafana&query=$.version&url=https://grafana.com/api/plugins/grafana-polystat-panel&label=Marketplace&prefix=v&color=F47A20)
-
-Consider other [badges](https://shields.io/badges) as you feel appropriate for your project.
-
-## Overview / Introduction
-Provide one or more paragraphs as an introduction to your plugin to help users understand why they should use it.
-
-Consider including screenshots:
-- in [plugin.json](https://grafana.com/developers/plugin-tools/reference/plugin-json#info) include them as relative links.
-- in the README ensure they are absolute URLs.
+The plugin is the UI. It connects to a separate headless agent (FastAPI + LangGraph +
+PydanticAI) that runs the LLM and performs the dashboard operations. The plugin's Go
+backend proxies REST calls to the agent so its API key never reaches the browser, while
+the browser streams responses over a WebSocket for a live, token-by-token experience.
 
 ## Requirements
-List any requirements or dependencies they may need to run the plugin.
 
-## Getting Started
-Provide a quick start on how to configure and use the plugin.
+- Grafana `>= 12.3.0`
+- A running Dashboard Agent service reachable from Grafana (see the project repository)
+- The agent's LLM provider (Ollama, OpenAI, Anthropic, …) and, for dashboard writes, a
+  Grafana service-account token configured on the agent
+
+## Getting started
+
+1. Install and enable the plugin in Grafana.
+2. Open the plugin's **Configuration** page (Admin) and set:
+   - **HTTP URL** — the agent's REST base, e.g. `http://host.docker.internal:8000`
+   - **WebSocket URL** — e.g. `ws://localhost:8000/ws/assistant`
+   - **API key** — optional; must match the agent's `ASSISTANT_API_KEY`
+3. Open the **Assistant** page from the nav and ask it to build a dashboard.
 
 ## Documentation
-If your project has dedicated documentation available for users, provide links here. For help in following Grafana's style recommendations for technical documentation, refer to our [Writer's Toolkit](https://grafana.com/docs/writers-toolkit/).
 
-## Contributing
-Do you want folks to contribute to the plugin or provide feedback through specific means? If so, tell them how!
--->
+Full setup, architecture, and configuration reference are in the project repository
+README, including how to run the agent and how to reuse the plugin under your own
+organization.
