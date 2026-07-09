@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1
+
+ARG GRAFANA_IMAGE=grafana
+ARG GRAFANA_VERSION=latest
+
+FROM node:24-bookworm-slim AS frontend
+WORKDIR /src
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+RUN TS_NODE_COMPILER_OPTIONS='{"module":"es2015","target":"es2022"}' npm run build
+
+FROM golang:1.25-bookworm AS backend
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+COPY --from=frontend /src/dist ./dist
+RUN set -eux; \
+    binary="dist/gpx_agent_frontend_$(go env GOOS)_$(go env GOARCH)"; \
+    CGO_ENABLED=0 go build -o "${binary}" ./pkg; \
+    chmod +x "${binary}"
+
+FROM grafana/${GRAFANA_IMAGE}:${GRAFANA_VERSION}
+
+USER root
+RUN mkdir -p /var/lib/grafana-plugins && chown -R 472:0 /var/lib/grafana-plugins
+COPY --from=backend --chown=472:0 /src/dist /var/lib/grafana-plugins/eclss-agentfrontend-app
+USER 472
