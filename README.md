@@ -3,6 +3,15 @@
 An AI assistant that builds Grafana dashboards from natural language, delivered as a
 first-class experience **inside Grafana**.
 
+> **Personal project** (a prototype, not built for an employer or on employer data). Case study:
+> [silentashish.com/projects/grafana-copilot-natural-language-dashboard-generator](https://www.silentashish.com/projects/grafana-copilot-natural-language-dashboard-generator)
+> (live once published).
+
+![The Assistant page inside Grafana: the first save of a generated dashboard fails verification, the second saves three panels that return data, and the reply summarises the dashboard.](docs/screenshots/assistant-verified-save.webp)
+
+*A local run on synthetic data (2026-09-23): the agent saves the dashboard, runs every panel query, and retries
+when one fails.*
+
 The project has two independent, reusable parts:
 
 | Folder | What it is | Stack |
@@ -17,26 +26,21 @@ Each folder has its own README with detailed setup:
 
 ## How the two pieces fit together
 
-```
-┌─────────────────────────────────────────┐
-│               Grafana                     │
-│  ┌─────────────────────────────────────┐ │
-│  │  App plugin (agent-grafana-plugin)  │ │
-│  │                                     │ │
-│  │  React UI ──REST──► Go backend ─────┼─┼──► FastAPI  (agent/)
-│  │     │                               │ │      │  chat, settings, health
-│  │     └──────WebSocket────────────────┼─┼──►   │  token streaming
-│  └─────────────────────────────────────┘ │      │
-└───────────────────────────────────────────┘     │
-                                                   ▼
-                              ┌────────────────────────────────────┐
-                              │  LangGraph + PydanticAI agent       │
-                              │                                     │
-                              │  ├─ LLM provider (Ollama/OpenAI/…)  │
-                              │  ├─ MCP: Grafana  (writes dashboards)│
-                              │  ├─ MCP: OpenSearch (discovers data)│
-                              │  └─ PostgreSQL  (thread history)     │
-                              └────────────────────────────────────┘
+```mermaid
+flowchart TB
+  subgraph Grafana
+    UI["Assistant page (React, TypeScript)"] -->|REST| GO["Plugin backend (Go)"]
+  end
+  GO -->|"REST + API key"| API["Agent API (FastAPI)"]
+  UI -->|"WebSocket: streamed tokens"| API
+  API --> LG["LangGraph: prepare context, run agent, finalize"]
+  LG --> PA["PydanticAI agent"]
+  PA -->|"MCP"| OS["OpenSearch MCP: indices, mappings"]
+  PA -->|"planned-dashboard tools"| B["Grafana Foundation SDK builders"]
+  B --> SV["Save, then run every panel query"]
+  SV -->|"MCP and HTTP API"| GF["Grafana"]
+  API --> PG["PostgreSQL: thread history"]
+  PA --> M["Model provider: Ollama, OpenAI or Anthropic"]
 ```
 
 - The **Go plugin backend** proxies REST calls (chat, settings, health) so the agent's
@@ -90,6 +94,54 @@ These defaults are also provisioned in
 
 Then open the **Assistant** page from the Grafana nav and ask it to build a dashboard.
 
+## Try it locally with synthetic data
+
+This is the setup used for the screenshots. It needs Docker and an LLM with tool calling, but no Go or Node on the
+host. Ports are offset to avoid clashing with other local services.
+
+1. **OpenSearch with a synthetic index** (security off, for local use only):
+   ```bash
+   docker run -d --name demo-opensearch -p 59200:9200 \
+     -e discovery.type=single-node -e DISABLE_SECURITY_PLUGIN=true -e DISABLE_INSTALL_DEMO_CONFIG=true \
+     opensearchproject/opensearch:2.15.0
+   ```
+   Create an index (for example `demo-orders` with `@timestamp`, keyword fields and a couple of numbers) and bulk-load a
+   few thousand generated documents.
+2. **Grafana with the plugin built in Docker.** `agent-grafana-plugin/Dockerfile.grafana` builds the frontend and the Go
+   backend itself:
+   ```bash
+   docker build -f agent-grafana-plugin/Dockerfile.grafana \
+     --build-arg GRAFANA_IMAGE=grafana --build-arg GRAFANA_VERSION=12.4.0 -t grafana-agent agent-grafana-plugin
+   ```
+   Run it with `GF_PATHS_PLUGINS=/var/lib/grafana-plugins`,
+   `GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=eclss-agentfrontend-app` and
+   `GF_PLUGINS_PREINSTALL_SYNC=grafana-opensearch-datasource`. Provision an OpenSearch datasource with the UID from
+   `OPENSEARCH_DATASOURCE_UID` (`opensearch-default`), and point the app plugin's `assistantApiUrl`/`assistantWsUrl`
+   at the agent. Then create a service account token (Administration → Service accounts) for
+   `GRAFANA_SERVICE_ACCOUNT_TOKEN`.
+3. **The agent**, on the host:
+   ```bash
+   cd agent
+   uv venv --python 3.12 && uv pip install -r requirements.txt "pydantic-ai-slim[openai,mcp]<2"
+   cp .env.example .env   # set the model, GRAFANA_URL/token, OPENSEARCH_URL, DATABASE_URL
+   set -a; . ./.env; set +a
+   alembic upgrade head
+   uvicorn api:app --app-dir app --port 8000
+   ```
+   - `pydantic-ai-slim` 2.x removed `MCPServerStdio`, which `app/mcp_config.py` imports. Until the requirements are
+     pinned, install `<2` as above. With 1.107.6, `uv pip install pytest pytest-asyncio && PYTHONPATH=app python -m pytest tests` passes (23 tests).
+   - If the machine has an AWS profile, the OpenSearch MCP server tries AWS request signing. Set
+     `OPENSEARCH_NO_AUTH=true` for a local cluster without security.
+   - `alembic upgrade head` reads `DATABASE_URL` from the environment, hence the `set -a` line.
+4. Open **Assistant** in Grafana and describe a dashboard. The agent proposes a plan, and builds it after you confirm.
+
+## Known limitations
+
+- Verification checks that every panel returns data, not that it shows the right thing. In the run above, both
+  time-series panels were drawn as one series per timestamp.
+- The planned-dashboard tools support OpenSearch only.
+- The plugin is unsigned: a development build.
+
 ## Configuration surface (what makes this reusable)
 
 Nothing about the deployment is baked into code — every connection point is an option:
@@ -122,6 +174,12 @@ it in **all** of these files (Grafana requires an id restart afterward):
 
 > The files under `agent-grafana-plugin/.config/` are managed by Grafana's plugin tools —
 > don't hand-edit them; re-run `npx @grafana/create-plugin@latest update` if they drift.
+
+## Screenshots
+
+| The first attempt | The saved dashboard |
+| --- | --- |
+| ![The agent reads the index mapping and data sources, then writes builder code itself instead of proposing a plan: five builds fail and it reports that no dashboard was saved.](docs/screenshots/assistant-dashboard-plan.webp) | ![The saved dashboard: two time-series panels and a bar chart of orders by region, on synthetic data.](docs/screenshots/generated-dashboard.webp) |
 
 ## License
 
