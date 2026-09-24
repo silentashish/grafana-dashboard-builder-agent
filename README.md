@@ -177,9 +177,9 @@ it in **all** of these files (Grafana requires an id restart afterward):
 
 ## Screenshots
 
-| The agent's plan | The saved dashboard |
+| The first attempt | The saved dashboard |
 | --- | --- |
-| ![The agent reads the datasource and the index mapping, then proposes a four-panel plan and asks for confirmation.](docs/screenshots/assistant-dashboard-plan.webp) | ![The saved dashboard: two time-series panels and a bar chart of orders by region, on synthetic data.](docs/screenshots/generated-dashboard.webp) |
+| ![The agent reads the index mapping and data sources, then writes builder code itself instead of proposing a plan: five builds fail and it reports that no dashboard was saved.](docs/screenshots/assistant-dashboard-plan.webp) | ![The saved dashboard: two time-series panels and a bar chart of orders by region, on synthetic data.](docs/screenshots/generated-dashboard.webp) |
 
 ## License
 
